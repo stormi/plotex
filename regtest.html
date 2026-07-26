@@ -125,6 +125,18 @@ A line beginning with <code>"** checkclass:"</code> specifies a (Python) file co
 </p>
 
 <p>
+A line beginning with <code>"** include:"</code> specifies a file to include at that point in the test file. Like all <code>**</code> directives, it must appear before the first test definition. The included file is parsed recursively; its tests, directives, and nested includes take effect as if the content were pasted inline. File paths are resolved relative to the directory of the file containing the <code>** include:</code> directive. You can use multiple <code>** include:</code> lines to include several files.
+</p>
+
+<p>
+Because included content is parsed inline, directives in included files follow the same rules as in the main file: <code>** game:</code> overrides any prior value, <code>** precommand:</code> appends to the precommand list, and so on. Test names must be unique across all files. A duplicate test name will cause an error. Circular includes (A includes B which includes A) are also an error.
+</p>
+
+<p>
+An included file can contain anything the main file can: top-level directives, test definitions, comments, and even more <code>** include:</code> lines.
+</p>
+
+<p>
 The rest of the test file is a set of <em>tests</em>. Each test is a separate run through the game. A test contains a sequence of <em>commands</em>. A command can contain various <em>checks</em>, validating the output of that command.
 </p>
 

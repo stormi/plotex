@@ -96,8 +96,9 @@ class RegTest:
     A test is one session of the game, from the beginning. (Not necessarily
     to the end.) After every game command, tests can be run.
     """
-    def __init__(self, name):
+    def __init__(self, name, testfile):
         self.name = name
+        self.testfile = testfile
         self.gamefile = None   # use global gamefile
         self.terp = None       # global terppath, terpargs
         self.precmd = None
@@ -1111,12 +1112,42 @@ def parse_checkfile(filename):
     finally:
         fl.close()
 
-def parse_tests(filename):
-    """Parse the test file. This fills out the testls array, and the
-    other globals which will be used during testing.
+def parse_file(filename, base_dir, testfile, visiting):
+    """Parse a test file, handling ** include directives recursively.
+    
+    filename:      the file path to parse
+    base_dir:      parent directory — used to resolve the given filename if it
+                    is not absolute (for the top-level file this is CWD, for an
+                    included file this is the directory of the including file)
+    testfile:      file name shown in error messages
+    visiting:      ordered list of (filename, absolute-path) tuples of all
+                    files currently in the include chain, from outermost to most
+                    recent. Used to detect circular includes: if the file we're
+                    about to parse is already in the chain, we raise an error
+                    showing the full cycle path.
+    
+    Note on path resolution:
+        - The file being parsed (filename) is resolved relative to base_dir.
+        - Files listed in that file's ** include: are resolved relative to
+          the including file's directory (abspath below), not base_dir.
+          This lets you nest includes in subdirectories without having to
+          rewrite paths on every level.
     """
     global gamefile, terppath, terpargs, terpformat
     
+    if not os.path.isabs(filename):
+        filename = os.path.join(base_dir, filename)
+    abspath = os.path.abspath(filename)
+    
+    # Check for circular includes
+    visited_paths = [p for _, p in visiting]
+    if abspath in visited_paths:
+        cycle = ' -> '.join([sf for sf, _ in visiting] + [testfile])
+        raise Exception('Circular include chain: ' + cycle)
+    
+    # Push self onto the chain so nested includes can detect cycles
+    visiting.append((testfile, abspath))
+
     fl = open(filename)
     curtest = None
     curcmd = None
@@ -1153,8 +1184,14 @@ def parse_tests(filename):
                     terpformat = 'rem' if (val.lower() > 'og') else 'cheap'
                 elif (key == 'checkclass'):
                     parse_checkfile(val)
+                elif (key == 'include'):
+                    # Resolve included file relative to THIS file's
+                    # directory (not the outer base_dir), so that nested
+                    # includes in subdirectories work naturally.
+                    inc_base = os.path.dirname(abspath)
+                    parse_file(val, inc_base, val, list(visiting))
                 else:
-                    raise Exception('Unknown option: ** ' + key)
+                    raise Exception('Unknown option: ** ' + key + ' (in ' + testfile + ')')
             else:
                 if (key == 'game'):
                     curtest.gamefile = val
@@ -1168,8 +1205,11 @@ def parse_tests(filename):
         if (ln.startswith('*')):
             ln = ln[1:].strip()
             if (ln in testmap):
+                existing = testmap[ln]
+                if existing.testfile != testfile:
+                    raise Exception('Test name used twice: ' + ln + ' (in ' + testfile + ' and ' + existing.testfile + ')')
                 raise Exception('Test name used twice: ' + ln)
-            curtest = RegTest(ln)
+            curtest = RegTest(ln, testfile=testfile)
             testls.append(curtest)
             testmap[curtest.name] = curtest
             curcmd = Command('(init)')
@@ -1184,6 +1224,14 @@ def parse_tests(filename):
         curcmd.addcheck(ln, linenum)
 
     fl.close()
+
+
+def parse_tests(filename):
+    """Parse the test file. This fills out the testls array, and the
+    other globals which will be used during testing.
+    """
+    base_dir = os.getcwd()
+    parse_file(filename, base_dir, filename, [])
 
 
 def list_commands(ls, res=None, nested=()):

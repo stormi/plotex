@@ -276,7 +276,23 @@ You can name any other test in the file. Its commands (and checks) will be execu
 </p>
 
 <p>
-(No space between the "&gt;" and the "{". Checks after an <code>&gt;{include}</code> line are meaningless; they are ignored.) 
+To silence the output of an included test in verbose mode, use the <code>:<i>silent</i></code> modifier:
+</p>
+
+<p>
+<code>&gt;{include:silent} TESTNAME</code>
+</p>
+
+<p>
+This executes all of the included test's commands normally, but suppresses their output from the verbose transcript. The included test's checks still run and will still report failures. To override the silencing and see everything, pass <code>-vv</code> instead of <code>-v</code>.
+</p>
+
+<p>
+In <code>-v</code> mode, a marker line <code>[silently included: TESTNAME]</code> is printed in place of the hidden commands, so the transcript still shows where the included test ran. This marker is not printed at <code>-vv</code>, since everything is already visible there.
+</p>
+
+<p>
+(No space between the "&gt;" and the "{". Checks after an <code>&gt;{include}</code> line are meaningless; they are ignored.)
 </p>
 
 <p>
@@ -388,6 +404,9 @@ When writing these input forms in a test, do not put any whitespace between the 
 
 <dt>&gt;{include} testname
 <dd>Performs all the commands and checks in the named test.
+
+<dt>&gt;{include:silent} testname
+<dd>Same as <code>{include}</code>, but suppresses the included commands' output from the verbose transcript. Their checks still run. Use <code>-vv</code> to override this silencing. In <code>-v</code> mode, a <code>[silently included: testname]</code> marker line is printed in place of the hidden commands.
 
 </dl>
 

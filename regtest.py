@@ -126,14 +126,13 @@ class Command:
     def __init__(self, cmd, type=None):
         if type is None:
             # Peel off the "{...}" prefix, if found.
-            match = re.match('{([a-z_]*)}', cmd)
+            match = re.match('{([a-z_:]*)}', cmd)
             if not match:
                 type = 'line'
                 cmd = cmd.strip()
             else:
                 type = match.group(1)
                 cmd = cmd[match.end() : ].strip()
-            
         self.type = type
         if self.type == 'line':
             self.cmd = cmd
@@ -184,7 +183,9 @@ class Command:
                 self.height = int(ls[1])
             except:
                 pass
-        elif self.type == 'include':
+        elif self.type in ['include', 'include:silent']:
+            self.silent = self.type.endswith(':silent')
+            self.type = 'include'
             self.cmd = cmd
         elif self.type == 'fileref_prompt':
             self.cmd = cmd
@@ -583,7 +584,7 @@ class GameState:
     def perform_input(self, cmd):
         raise Exception('perform_input not implemented')
         
-    def accept_output(self):
+    def accept_output(self, silenced=False):
         raise Exception('accept_output not implemented')
 
 class GameStateCheap(GameState):
@@ -598,7 +599,7 @@ class GameStateCheap(GameState):
         self.infile.write((cmd.cmd+'\n').encode())
         self.infile.flush()
 
-    def accept_output(self):
+    def accept_output(self, silenced=False):
         self.storywin = []
         output = bytearray()
         
@@ -617,7 +618,7 @@ class GameStateCheap(GameState):
             
         dat = output.decode('utf-8')
         res = dat.split('\n')
-        if (opts.verbose):
+        if opts.verbose and not silenced:
             for ln in res:
                 if (ln == '>'):
                     continue
@@ -715,7 +716,7 @@ class GameStateRemGlk(GameState):
         self.infile.write((cmd+'\n').encode())
         self.infile.flush()
         
-    def accept_output(self):
+    def accept_output(self, silenced=False):
         import json
         output = bytearray()
         update = None
@@ -749,7 +750,7 @@ class GameStateRemGlk(GameState):
         if time.time() >= timeout_time:
             raise Exception('Timed out awaiting output')
 
-        self.parse_remglk_update(update)
+        self.parse_remglk_update(update, silenced=silenced)
 
     def construct_remglk_input(self, cmd):
         if cmd.type == 'line':
@@ -805,7 +806,7 @@ class GameStateRemGlk(GameState):
             print()
         return update
 
-    def parse_remglk_update(self, update):
+    def parse_remglk_update(self, update, silenced=False):
         # Parse the update object. This is complicated. For the format,
         # see http://eblong.com/zarf/glk/glkote/docs.html
 
@@ -852,7 +853,7 @@ class GameStateRemGlk(GameState):
                     if text:
                         for line in text:
                             dat = self.extract_text(line)
-                            if (opts.verbose == 1):
+                            if opts.verbose == 1 and not silenced:
                                 if (dat != '>'):
                                     print(dat)
                             if line.get('append') and len(self.storywin):
@@ -956,14 +957,14 @@ class GameStateRemGlkSingle(GameStateRemGlk):
         (outdat, errdat) = proc.communicate((cmd+'\n').encode(), timeout=opts.timeout_secs)
         self.pendingupdate = outdat.decode()
         
-    def accept_output(self):
+    def accept_output(self, silenced=False):
         import json
         dat = self.pendingupdate
         self.assert_json(dat)
         update = json.loads(dat)
         self.pendingupdate = None
 
-        self.parse_remglk_update(update)
+        self.parse_remglk_update(update, silenced=silenced)
 
 class ObjPrint:
     NoneType = type(None)
@@ -1234,9 +1235,12 @@ def parse_tests(filename):
     parse_file(filename, base_dir, filename, [])
 
 
-def list_commands(ls, res=None, nested=()):
+def list_commands(ls, res=None, nested=(), silenced=False):
     """Given a list of commands, replace any {include} commands with the
-    commands in the named subtests. This works recursively.
+    commands in the named subtests. This works recursively. The result is
+    a list of (command, silenced) pairs; a command is silenced when it
+    comes from a {include:silent}, which also appends the include command
+    itself (marked silenced) to stand in for the hidden block.
     """
     if res is None:
         res = []
@@ -1247,9 +1251,11 @@ def list_commands(ls, res=None, nested=()):
             test = testmap.get(cmd.cmd)
             if not test:
                 raise Exception('Included test not found: %s' % (cmd.cmd,))
-            list_commands(test.cmds, res, nested+(cmd.cmd,))
+            if cmd.silent:
+                res.append((cmd, True))
+            list_commands(test.cmds, res, nested+(cmd.cmd,), silenced=silenced or cmd.silent)
             continue
-        res.append(cmd)
+        res.append((cmd, silenced))
     return res
 
 class VitalCheckException(Exception):
@@ -1303,8 +1309,16 @@ def run(test):
                     if check.vital:
                         raise VitalCheckException()
     
-        for cmd in cmdlist:
-            if (opts.verbose):
+        for cmd, silenced in cmdlist:
+            # An 'include' Command only ever reaches this list as a marker for a
+            # silenced block (list_commands() always continues past it otherwise).
+            if cmd.type == 'include':
+                if opts.verbose == 1:
+                    print('[silently included: %s]' % (cmd.cmd,))
+                    print()
+                continue
+            suppressed = silenced and opts.verbose < 2
+            if opts.verbose and not suppressed:
                 if cmd.type == 'line':
                     if terpformat == 'cheap':
                         print('> %s' % (cmd.cmd,))
@@ -1314,7 +1328,7 @@ def run(test):
                 else:
                     print('> {%s} %s' % (cmd.type, repr(cmd.cmd),))
             gamestate.perform_input(cmd)
-            gamestate.accept_output()
+            gamestate.accept_output(silenced=suppressed)
             for check in cmd.checks:
                 res = check.eval(gamestate)
                 if (res):

@@ -1258,6 +1258,14 @@ def list_commands(ls, res=None, nested=(), silenced=False):
         res.append((cmd, silenced))
     return res
 
+def starts_silenced(cmdlist):
+    """Whether the first action of a flattened command list is silenced.
+    Whatever gets printed before that action (the game's initial output,
+    or precommands running ahead of it) is part of the same silenced
+    span, since it is all setup leading up to it.
+    """
+    return bool(cmdlist) and cmdlist[0][1]
+
 class VitalCheckException(Exception):
     pass
 class NotJSONException(Exception):
@@ -1294,11 +1302,21 @@ def run(test):
     else:
         raise Exception('Unrecognized format: %s' % (terpformat,))
 
-    cmdlist = list_commands(precommands + test.cmds)
+    # The test's own commands, flattened. When its first action turns out to
+    # be silenced (a leading {include:silent}, possibly reached through a
+    # chain of plain {include}s), the global precommands running ahead of it
+    # are just as much setup you have already seen, so silence those too.
+    tail = list_commands(test.cmds)
+    cmdlist = list_commands(precommands, silenced=starts_silenced(tail)) + tail
 
     try:
         gamestate.initialize()
-        gamestate.accept_output()
+        # The initial output comes before the first action of all, so it is
+        # silenced whenever that action is, whether the silence originates
+        # in the test's own commands or in a precommand which is itself a
+        # silent include.
+        initsuppressed = starts_silenced(cmdlist) and opts.verbose < 2
+        gamestate.accept_output(silenced=initsuppressed)
         if (test.precmd):
             for check in test.precmd.checks:
                 res = check.eval(gamestate)

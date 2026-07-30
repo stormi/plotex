@@ -292,6 +292,14 @@ In <code>-v</code> mode, a marker line <code>[silently included: TESTNAME]</code
 </p>
 
 <p>
+When the first thing a test does is silenced, whatever comes before it is silenced with it: the game's initial output (before any command has been sent), and any <code>** precommand:</code> lines or <code>-p</code> command-line precommands running ahead of it. That whole span is the boilerplate setup you already saw when the included test ran on its own, so the transcript of each test starts where the test itself does. This happens automatically; there's no separate way to mark it as silent, and <code>-vv</code> still shows everything.
+</p>
+
+<p>
+A test starts silently when its first command is <code>&gt;{include:silent}</code>, when its first command is a plain <code>&gt;{include}</code> of a "wrapper" test which itself starts silently (RegTest follows the chain of leading includes), or when the silent include is a precommand (<code>** precommand: {include:silent} TESTNAME</code>, or the same through <code>-p</code>) and therefore the first thing every test in the file does. If something you can see runs first instead, such as a plain precommand ahead of the silent include, the initial output stays visible along with it.
+</p>
+
+<p>
 (No space between the "&gt;" and the "{". Checks after an <code>&gt;{include}</code> line are meaningless; they are ignored.)
 </p>
 

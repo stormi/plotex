@@ -1375,7 +1375,7 @@ def run(test):
         proc.stdin.close()
         proc.stdout.close()
         proc.kill()
-        proc.poll()
+        proc.wait()
     
     
 checkclasses.append(RegExpCheck)

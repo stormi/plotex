@@ -577,9 +577,26 @@ class GameState:
         # Gotta keep track of where each status window begins in the
         # (vertically) agglomerated statuswin[] array
         self.statuslinestarts = {}
+        # Bytes read from the interpreter but not yet consumed by
+        # accept_output (output is read in chunks, which can run past the
+        # end of the current response).
+        self.pending = b''
 
     def initialize(self):
         pass
+
+    def read_chunk(self, timeout_time):
+        """Wait for interpreter output until timeout_time, and return
+        whatever is available (b'' at end of stream). Raise an exception
+        on timeout.
+        Reading one byte per call costs a select() and a read() per byte,
+        which dominates the running time of long tests.
+        """
+        remaining = timeout_time - time.time()
+        if (remaining <= 0
+            or select.select([self.outfile],[],[],remaining)[0] == []):
+            raise Exception('Timed out awaiting output')
+        return os.read(self.outfile.fileno(), 65536)
 
     def perform_input(self, cmd):
         raise Exception('perform_input not implemented')
@@ -605,16 +622,18 @@ class GameStateCheap(GameState):
         
         timeout_time = time.time() + opts.timeout_secs
 
-        while (select.select([self.outfile],[],[],opts.timeout_secs)[0] != []):
-            ch = self.outfile.read(1)
-            if ch == b'':
+        output += self.pending
+        self.pending = b''
+        while True:
+            pos = output.find(b'\n>')
+            if pos >= 0:
+                self.pending = bytes(output[pos+2:])
+                del output[pos+2:]
                 break
-            output += ch
-            if (output[-2:] == b'\n>'):
+            chunk = self.read_chunk(timeout_time)
+            if chunk == b'':
                 break
-            
-        if time.time() >= timeout_time:
-            raise Exception('Timed out awaiting output')
+            output += chunk
             
         dat = output.decode('utf-8')
         res = dat.split('\n')
@@ -722,33 +741,41 @@ class GameStateRemGlk(GameState):
         update = None
 
         timeout_time = time.time() + opts.timeout_secs
+        decoder = json.JSONDecoder()
 
         # Read until a complete JSON object comes through the pipe (or
-        # we time out).
+        # we time out). Whatever follows the object is kept for the next
+        # call.
         # We sneakily rely on the fact that RemGlk always uses dicts
         # as the JSON object, so it always ends with "}".
-        while (select.select([self.outfile],[],[],opts.timeout_secs)[0] != []):
-            ch = self.outfile.read(1)
-            if ch == b'':
+        output += self.pending
+        self.pending = b''
+        while True:
+            if b'}' in output:
+                # Test and see if we have a complete valid object.
+                # (It might be partial, in which case we'll try again later.
+                # The chunk may also end in the middle of a UTF-8 sequence.)
+                try:
+                    dat = output.decode('utf-8')
+                except UnicodeDecodeError:
+                    dat = None
+                if dat is not None:
+                    self.assert_json(dat)
+                    start = len(dat) - len(dat.lstrip())
+                    try:
+                        update, end = decoder.raw_decode(dat, start)
+                        self.pending = dat[end:].encode('utf-8')
+                        break
+                    except ValueError:
+                        pass
+            chunk = self.read_chunk(timeout_time)
+            if chunk == b'':
                 # End of stream. Hopefully we have a valid object.
                 dat = output.decode('utf-8')
                 self.assert_json(dat)
                 update = json.loads(dat)
                 break
-            output += ch
-            if (output[-1] == ord('}')):
-                # Test and see if we have a complete valid object.
-                # (It might be partial, in which case we'll try again later.)
-                dat = output.decode('utf-8')
-                self.assert_json(dat)
-                try:
-                    update = json.loads(dat)
-                    break
-                except:
-                    pass
-                
-        if time.time() >= timeout_time:
-            raise Exception('Timed out awaiting output')
+            output += chunk
 
         self.parse_remglk_update(update, silenced=silenced)
 
